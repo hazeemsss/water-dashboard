@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF">
+  <title>Water Quality Dashboard</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f2f2f2;
+      padding: 30px;
+      text-align: center;
+    }
+
+    h1 {
+      color: #0077cc;
+    }
+
+    #chartContainer {
+      width: 90%;
+      max-width: 800px;
+      margin: auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+    }
+
+    canvas {
+      margin-top: 20px;
+    }
+
+    #statusLabel {
+      margin-top: 20px;
+      font-size: 24px;
+      font-weight: bold;
+      display: inline-block;
+      padding: 10px 20px;
+      border-radius: 8px;
+      white-space: pre-line;
+      background-color: #eee;
+      color: black;
+      border: 2px solid red;
+    }
+
+    .clean {
+      background-color: #28a745;
+      color: white;
+    }
+
+    .contaminated {
+      background-color: #dc3545;
+      color: white;
+    }
+
+    #exportCSV {
+      margin-top: 15px;
+      padding: 8px 12px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    footer {
+      margin-top: 40px;
+      color: #777;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>💧 Water Quality Dashboard</h1>
+
+  <div id="chartContainer">
+    <canvas id="voltageChart"></canvas>
+    <canvas id="statusPieChart"></canvas>
+    <button id="exportCSV">📥 Export CSV</button>
+    <div id="statusLabel">🚦 Waiting for data...</div>
+  </div>
+
+  <footer>ESP32 Sensor · Realtime Firebase Chart · Made by Hazeem™</footer>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBT72V3Fx6PCBRhb7tMHt_4yxnszOhclEs",
+      authDomain: "water-quality-monitor-bb59a.firebaseapp.com",
+      databaseURL: "https://water-quality-monitor-bb59a-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "water-quality-monitor-bb59a",
+      storageBucket: "water-quality-monitor-bb59a.appspot.com",
+      messagingSenderId: "1032165347900",
+      appId: "1:1032165347900:web:54623212567aded2442939"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    window.lastAlert = null;
+
+    const labels = [];
+    const data = {
+      labels: labels,
+      datasets: [{
+        label: 'Average Voltage (V)',
+        data: [],
+        borderColor: 'rgba(0, 153, 255, 1)',
+        backgroundColor: 'rgba(0, 153, 255, 0.2)',
+        tension: 0.3,
+        fill: true,
+        pointRadius: 4,
+        pointHoverRadius: 6
+      }]
+    };
+
+    const config = {
+      type: 'line',
+      data: data,
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          title: { display: true, text: 'Realtime Piezo Sensor Voltage (Averaged)' }
+        },
+        scales: {
+          y: {
+            min: 0,
+            max: 3.3,
+            title: { display: true, text: 'Voltage (V)' }
+          },
+          x: {
+            title: { display: true, text: 'Time (HH:MM:SS)' }
+          }
+        }
+      }
+    };
+
+    const voltageChart = new Chart(document.getElementById('voltageChart'), config);
+    const pieChart = new Chart(document.getElementById('statusPieChart'), {
+      type: 'pie',
+      data: {
+        labels: ['Clean', 'Contaminated'],
+        datasets: [{
+          data: [0, 0],
+          backgroundColor: ['#28a745', '#dc3545']
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: {
+            display: true,
+            text: 'Status Distribution'
+          }
+        }
+      }
+    });
+
+    const statusLabel = document.getElementById("statusLabel");
+
+    // CSV export
+    document.getElementById("exportCSV").addEventListener("click", () => {
+      db.ref("logs").once("value", (snapshot) => {
+        const logs = snapshot.val();
+        if (!logs) return alert("No data available");
+        const rows = [["Timestamp", "Average Voltage", "Status"]];
+        Object.keys(logs).sort().forEach(ts => {
+          const e = logs[ts];
+          rows.push([ts, e.avgVoltage || "", e.status || ""]);
+        });
+        const csvContent = rows.map(row => row.join(",")).join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", "water_quality_log.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      });
+    });
+
+    db.ref("logs").on("value", (snapshot) => {
+      const logs = snapshot.val();
+      if (!logs) return;
+
+      const sortedTimestamps = Object.keys(logs).sort();
+      labels.length = 0;
+      data.datasets[0].data.length = 0;
+
+      let cleanCount = 0;
+      let contaminatedCount = 0;
+
+      sortedTimestamps.forEach(ts => {
+        const entry = logs[ts];
+        labels.push(ts.replace(/-/g, ":"));
+        data.datasets[0].data.push(entry.avgVoltage || 0);
+        const status = (entry.status || "").toLowerCase();
+        if (status === "clean") cleanCount++;
+        else if (status === "contaminated") contaminatedCount++;
+      });
+
+      voltageChart.update();
+      pieChart.data.datasets[0].data = [cleanCount, contaminatedCount];
+      pieChart.update();
+
+      let latestEntry = null;
+      let latestTS = "";
+
+      for (let i = sortedTimestamps.length - 1; i >= 0; i--) {
+        const ts = sortedTimestamps[i];
+        const entry = logs[ts];
+        if (entry?.avgVoltage !== undefined && entry?.status !== undefined) {
+          latestTS = ts;
+          latestEntry = entry;
+          break;
+        }
+      }
+
+      if (latestEntry) {
+        const avgVoltage = latestEntry.avgVoltage || 0;
+        const status = (latestEntry.status || "").toLowerCase();
+
+        if (status === "contaminated") {
+          statusLabel.innerText = `⚠ Contaminated\nAvg: ${avgVoltage.toFixed(2)} V`;
+          statusLabel.className = "contaminated";
+
+          if (!window.lastAlert || window.lastAlert !== latestTS) {
+            alert("🚨 ALERT: Contaminated water detected!");
+            window.lastAlert = latestTS;
+
+            // Set buzzer flag
+            db.ref("/buzzer").set(true);
+
+            document.body.style.backgroundColor = "#ffdddd";
+            setTimeout(() => {
+              document.body.style.backgroundColor = "#f2f2f2";
+            }, 2000);
+
+            const beep = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+            beep.play().catch(e => console.log("🔇 Sound blocked:", e));
+          }
+        } else {
+          statusLabel.innerText = `✅ Clean\nAvg: ${avgVoltage.toFixed(2)} V`;
+          statusLabel.className = "clean";
+        }
+      }
+    });
+  </script>
+
+</body>
+</html>
