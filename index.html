@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF">
+  <meta charset="UTF-8">
   <title>Water Quality Dashboard</title>
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
@@ -62,6 +62,33 @@
       cursor: pointer;
     }
 
+    #statsBox {
+      margin-top: 30px;
+      text-align: left;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+      font-size: 16px;
+      background: #fff;
+      padding: 15px 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.05);
+    }
+
+    #statsBox h3 {
+      margin-top: 0;
+      color: #333;
+    }
+
+    #statsBox ul {
+      list-style-type: none;
+      padding-left: 0;
+    }
+
+    #statsBox li {
+      margin-bottom: 8px;
+    }
+
     footer {
       margin-top: 40px;
       color: #777;
@@ -75,9 +102,19 @@
 
   <div id="chartContainer">
     <canvas id="voltageChart"></canvas>
-    <canvas id="statusPieChart"></canvas>
+    <canvas id="statusPieChart" width="50" height="50"></canvas>
     <button id="exportCSV">📥 Export CSV</button>
     <div id="statusLabel">🚦 Waiting for data...</div>
+  </div>
+
+  <div id="statsBox">
+    <h3>📊 System Stats</h3>
+    <ul>
+      <li><strong>Total Readings:</strong> <span id="statTotal">--</span></li>
+      <li><strong>% Contaminated:</strong> <span id="statContaminated">--</span></li>
+      <li><strong>Last Contaminated Time:</strong> <span id="statLastContaminated">--</span></li>
+      <li><strong>Last Voltage Reading:</strong> <span id="statLastVoltage">--</span></li>
+    </ul>
   </div>
 
   <footer>ESP32 Sensor · Realtime Firebase Chart · Made by Hazeem™</footer>
@@ -157,7 +194,6 @@
 
     const statusLabel = document.getElementById("statusLabel");
 
-    // CSV export
     document.getElementById("exportCSV").addEventListener("click", () => {
       db.ref("logs").once("value", (snapshot) => {
         const logs = snapshot.val();
@@ -188,20 +224,37 @@
       data.datasets[0].data.length = 0;
 
       let cleanCount = 0;
-      let contaminatedCount = 0;
+      let contCount = 0;
+      let lastContaminated = "—";
+      let lastVoltage = 0;
 
       sortedTimestamps.forEach(ts => {
         const entry = logs[ts];
         labels.push(ts.replace(/-/g, ":"));
-        data.datasets[0].data.push(entry.avgVoltage || 0);
+        const voltage = entry.avgVoltage || 0;
         const status = (entry.status || "").toLowerCase();
+        data.datasets[0].data.push(voltage);
+        lastVoltage = voltage.toFixed(2);
+
         if (status === "clean") cleanCount++;
-        else if (status === "contaminated") contaminatedCount++;
+        else if (status === "contaminated") {
+          contCount++;
+          lastContaminated = ts.replace(/-/g, ":");
+        }
       });
 
+      const total = cleanCount + contCount;
+      const contaminationRate = total > 0 ? ((contCount / total) * 100).toFixed(1) + "%" : "0%";
+
       voltageChart.update();
-      pieChart.data.datasets[0].data = [cleanCount, contaminatedCount];
+      pieChart.data.datasets[0].data = [cleanCount, contCount];
       pieChart.update();
+
+      // Update stats
+      document.getElementById("statTotal").innerText = total;
+      document.getElementById("statContaminated").innerText = contaminationRate;
+      document.getElementById("statLastContaminated").innerText = lastContaminated;
+      document.getElementById("statLastVoltage").innerText = lastVoltage + " V";
 
       let latestEntry = null;
       let latestTS = "";
@@ -228,7 +281,6 @@
             alert("🚨 ALERT: Contaminated water detected!");
             window.lastAlert = latestTS;
 
-            // Set buzzer flag
             db.ref("/buzzer").set(true);
 
             document.body.style.backgroundColor = "#ffdddd";
@@ -246,6 +298,5 @@
       }
     });
   </script>
-
 </body>
 </html>
